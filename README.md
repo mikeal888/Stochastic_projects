@@ -1,5 +1,3 @@
 # Finance
 
-\begin{equation}
-F = mx
-\end{equation}
+This repo contains all the upskilling I have undertaken in 2022
