@@ -19,7 +19,7 @@ S0 = 100
 K = 100
 T = 1
 r = 0.06
-N = 4000
+N = 3
 u = 1.1
 d = 1/u
 opttype = 'C'   # Could be P
@@ -66,14 +66,16 @@ def binomial_tree_fast(K, T, S0, r, N, u, d, opttype):
     # initialise option values at maturity
     C = np.maximum(C-K, np.zeros(N+1))
 
+    return C
+
     # Step backwards through tree
     for i in np.arange(N, 0, -1):
         C = disc * (q * C[1:i+1] + (1-q) * C[0:i])
 
-    return C[0]
+    return C
 
 
 
-print(binomial_tree_slow(K, T, S0, r, N, u, d, opttype))
+# print(binomial_tree_slow(K, T, S0, r, N, u, d, opttype))
 
 print(binomial_tree_fast(K, T, S0, r, N, u, d, opttype))

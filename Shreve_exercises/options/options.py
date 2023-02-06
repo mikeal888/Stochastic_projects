@@ -1,0 +1,3 @@
+'''
+Create list of options
+'''
