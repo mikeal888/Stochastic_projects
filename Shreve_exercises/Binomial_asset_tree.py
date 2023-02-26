@@ -152,3 +152,7 @@ if __name__ == "__main__":
     model.solve()
 
     print(model.x.value)
+
+    print(model.problem.status)
+
+
