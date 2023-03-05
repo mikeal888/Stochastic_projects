@@ -4,155 +4,220 @@ from time import time
 import cvxpy as cp
 from scipy.special import binom
 
+"""
+Implementation of the Binomial Asset Tree model.
+-----------------------------------------------
 
-def timing(f):
-    # Create timing wrapper
-    @wraps(f)
-    def wrap(*args, **kw):
-        ts = time()
-        result = f(*args, **kw)
-        te = time()
-        print("func:%r args:[%r, %r] took: %2.4f sec" % (f.__name__, args, kw, te - ts))
-        return result
+This is a pretty simple implementation of the BAT model.
+It is broken into first a BinomialAssetTree class which computes all the underlying properties of the tree
+This object is then inherited by different option classes which compute the option prices.
 
-    return wrap
+"""
 
-
-class BinomialTreeEuropean:
+class BinomialAssetTree:
 
     """
-    Binomial asset tree model with different options.
+    This class implements the binomial asset tree model.
 
-    We need to know several things:
-    u, d, S0, T, N, r, K, option
+    Attributes:
+        u (float): up factor
+        S0 (float): initial asset price
+        T (float): maturity
+        N (int): number of time steps
+        r (float): risk free rate
+        K (float): strike price
     """
-    def __init__(self, params):
 
-        self.__dict__.update(params)  # load model parameters
-        self.dt = self.T / self.N  # Compute time step
-        self.disc = 1 + self.r  # Compute discount rate
-        self.risk_p = (self.disc - self.d) / (
-            self.u - self.d
-        )  # Compute risk neutral probability
-        self.delta0 = self.calculate_delta0()
-        self.V0 = self.calculate_v0()
-        self.X0 = self.calculate_x0()
+    def __init__(self, u, S0, K, T, N, r):
+        self.u = u
+        self.d = 1/u
+        self.S0 = S0
+        self.T = T
+        self.N = N
+        self.r = r
+        self.K = K
 
-    def calculate_sn(self, n):
-        # Compute potential price outcomes
+        # Define some useful quantities
+        self.dt = self.T/self.N                   # Time step
+        self.disc = np.exp(-r*self.dt)  # Discount factor
+        self.p = (self.disc - self.d)/(self.u - self.d) # Risk neutral probability
+
+    def stock_prices(self, n=None):
+        # Computes all possible stock prices at time step n
+        if n is None:
+            n = self.N
+
         return (
             self.S0
             * self.d ** (np.arange(n, -1, -1))
             * self.u ** (np.arange(0, n + 1, 1))
         )
+        
+    def risk_probs(self, n=None):
+        '''
+        Compute risk neutral probabilities of outcomes Sn
+        Notes, we sume probabilities of symmetric events i.e P(HT) = P(TH) thus, multiply by 2
+        '''
+        if n is None:
+            n = self.N
 
-    def vn(self):
-        # Compute asset prices at maturity T = N
-        if self.option == "put":
-            return np.maximum(self.K - self.calculate_sn(self.N), np.zeros(self.N + 1))
-        else:
-            return np.maximum(self.calculate_sn(self.N) - self.K, np.zeros(self.N + 1))
-
-    def calculate_v0(self):
-        # Compute initial asset price through tree at time n
-        C = self.vn()
-        for i in np.arange(self.N, 0, -1):
-            # C[1:i+1] corresponds to all tails at the end
-            C = ((self.risk_p) * C[1 : i + 1] + (1 - self.risk_p) * C[0:i]) / self.disc
-
-        return C[0]
-
-    def calculate_vn(self, n):
-        # Compute initial asset price through tree at time n
-        C = self.vn()
-        for i in np.arange(self.N, n, -1):
-            C = ((self.risk_p) * C[1 : i + 1] + (1 - self.risk_p) * C[0:i]) / self.disc
-
-        return C
-
-    def calculate_delta0(self):
-        # Compute risk neutal share holding
-        self.d0 = np.diff(self.calculate_vn(1))[0] / ((self.u - self.d) * self.S0)
-        return self.d0
-
-    def calculate_deltan(self, n):
-        # Calculate
-        return np.diff(self.calculate_vn(n + 1)) / np.diff(self.calculate_sn(n + 1))
-
-    def calculate_x0(self):
-        # Calculate X0
-        return sum(
-            (1 / self.disc)
-            * self.calculate_vn(1)
-            * np.array([1 - self.risk_p, self.risk_p])
-        )
-
-
-class CapitalAssetPricing():
-
-    # Here we implement the capital asset pricing model using cvx. Here we will need a specified n,
-    # and real probabilities
-
-    def __init__(self, params):
-        self.__dict__.update(params)  # load model parameters
-
-        self.disc = 1 + self.r  # Compute discount rate
-
-        # Compute risk probabilities but scaled by binom for symmetry
-        self.risk_p = (self.disc - self.d) / (self.u - self.d)
-        self.risk_probs = self.calculate_risk_probs()
-
-        self.Z = self.risk_probs / self.p  # compute Randon Nikodym derivative
-        self.zeta = self.Z / (1 + self.r) ** self.n
-        self.pn_zeta = self.p * self.zeta
-
-    def calculate_sn(self):
-        # Compute potential price outcomes
-        return (
-            self.S0
-            * self.d ** (np.arange(self.n, -1, -1))
-            * self.u ** (np.arange(0, self.n + 1, 1))
-        )
-
-    def calculate_risk_probs(self):
-        # Compute risk neutral probabilities
         risk_probs = (
-            self.risk_p ** (np.arange(self.n, -1, -1))
-            * (1 - self.risk_p) ** (np.arange(0, self.n + 1, 1))
-            * binom(self.n, np.arange(self.n + 1))
+            self.p ** (np.arange(n, -1, -1))
+            * (1 - self.p) ** (np.arange(0, n + 1, 1))
+            * binom(n, np.arange(n + 1))
         )
 
         return risk_probs
 
+class EuropeanBAT(BinomialAssetTree):
+    '''
+    European option pricing using the Binomial Asset Tree model
+    Inherits the BinomialAssetTree class
+    '''
+
+    def __init__(self, u, S0, K, T, N, r, option='call'):
+        super().__init__(u, S0, K, T, N, r)
+        self.option = option
+        self.initial_price = self.price_option()
+        self.initial_option_price = self.price_option()   # initial price of options
+        self.initial_hedge = self.hedging_ratio()  # initial hedging ratio
+
+    def payoff(self):
+        # Define the payoff function
+        if self.option == 'call':
+            return np.maximum(self.stock_prices(self.N) - self.K, np.zeros(self.N + 1))
+        else:
+            return np.maximum(self.K - self.stock_prices(self.N), np.zeros(self.N + 1))
+
+    def price_option(self, n=None):
+        # price the option at time step n
+
+        if n is None:
+            # Default to find initial price
+            n = 0
+
+        # Initialise the option price vector
+        Vn = self.payoff()
+        for i in np.arange(self.N, n, -1):
+            Vn = ((self.p) * Vn[1 : i + 1] + (1 - self.p) * Vn[0:i]) / self.disc
+
+        return Vn
+
+    def hedging_ratio(self, n=None):
+        # Calculate hedging ratio
+        if n is None:
+            n = 0
+
+        return np.diff(self.price_option(n+1)) / np.diff(self.stock_prices(n + 1))
+
+class AmericanBAT(BinomialAssetTree):
+    '''
+    American option pricing using the Binomial Asset Tree model
+    Inherits the BinomialAssetTree class
+    '''
+
+    def __init__(self, u, S0, K, T, N, r, option='put'):
+        super().__init__(u, S0, K, T, N, r)
+        self.option = option
+        self.initial_price = self.price_option()
+        self.initial_option_price = self.price_option()   # initial price of options
+        self.initial_hedge = self.hedging_ratio()  # initial hedging ratio
+
+    
+    def payoff(self):
+        # Compute potential price outcomes
+        return np.maximum(self.K - self.stock_prices(self.N), 0)
+    
+    def price_option(self, n=None):
+        # price the option at time step n
+        if n is None:
+            n = 0
+
+        # Initialise the option price vector
+        Vn = self.payoff()
+        
+        for i in np.arange(self.N, n, -1):
+            # Compute Vn for each step
+            Vn = ((self.p) * Vn[1 : i + 1] + (1 - self.p) * Vn[0:i]) / self.disc
+            Vn = np.maximum(Vn, self.K - self.stock_prices(i-1))
+
+        return Vn
+    
+    def hedging_ratio(self, n=None):
+        # Calculate hedging ratio
+        if n is None:
+            n = 0
+
+        return np.diff(self.price_option(n+1)) / np.diff(self.stock_prices(n + 1))
+    
+    def cash_flow(self, n=None):
+        # Calculate cash flow back to investor at time step n
+        if n==None:
+            n = self.N - 1
+
+        if n >= self.N:
+            raise ValueError('AmericanBAT: n must be less than N for cash flow calculation')
+        
+        Vnp1 = self.price_option(n+1)
+
+        return self.price_option(n) - (self.p * Vnp1[1:n+2] + (1 - self.p) * Vnp1[:n+1]) / self.disc
+    
+class CapitalAssetPricing(BinomialAssetTree):
+
+    '''
+    ########## NOT FINISHED ###########
+    Implements the Capital Asset Pricing Model using the Binomial Asset Tree model
+    Here we only use a log utility function
+    Inherits the BinomialAssetTree class
+    '''
+
+    def __init__(self, u, S0, K, T, N, r, real_p, X0):
+        '''
+        Parameters
+        ----------
+        real_p : float  # real probabilities of an upward jump; does not distingusish between P(HT) and P(TH)
+        X0 : float  # initial wealth
+        '''
+        super().__init__(u, S0, K, T, N, r)
+        self.real_p = real_p    # real probabilities of an upward jump
+        self.X0 = X0    # initial wealth
+
+        # Compute risk neutral probabilities for all outcomes
+        self.risk_ps = self.risk_probs()
+        self.Z = self.risk_probs / self.real_p  # compute Randon Nikodym derivative
+        self.zeta = self.Z / (1 + self.r) ** self.n # compute zeta
+        self.pn_zeta = self.p * self.zeta # compute pn_zeta
+
     def solve(self):
 
-        # Only implemented for log at the moment
-        # Generalise to arbitary convex function
+        # Only implemented for log at the momen Generalise to arbitary convex function
 
-        self.x = cp.Variable(self.n + 1)
+        self.x = cp.Variable(self.N + 1)
         self.problem = cp.Problem(
             cp.Maximize(self.p @ cp.log(self.x)), [self.pn_zeta @ self.x == self.X0]
         )
         self.problem.solve()
 
 
+
+
+
 if __name__ == "__main__":
 
-    n = 2
+    N = 3
     u = 2
-    r = 0.25
+    r = -np.log(1.25)
+    K = 5
+    S0 = 4
+    T = N
+    option = "put"
 
-    p = np.array([1 / 9, 4 / 9, 4 / 9])
-    X0 = 4
 
-    params = {"r": r, "u": u, "d": 1 / u, "X0": X0, "p": p, "n": n}
+    tree = BinomialAssetTree(u, S0, K, T, N, r)
+    eurotree = EuropeanBAT(u, S0, K, T, N, r, option=option)
+    ustree = AmericanBAT(u, S0, K, T, N, r)
 
-    model = CapitalAssetPricing(params)
-
-    model.solve()
-
-    print(model.x.value)
-
-    print(model.problem.status)
+    print(eurotree.hedging_ratio())
+    print(ustree.cash_flow(2))
 
 

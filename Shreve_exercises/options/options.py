@@ -1,3 +1,0 @@
-'''
-Create list of options
-'''
