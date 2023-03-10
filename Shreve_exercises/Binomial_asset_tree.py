@@ -61,13 +61,13 @@ class BinomialAssetTree:
         if n is None:
             n = self.N
 
-        risk_probs = (
+        probs = (
             self.p ** (np.arange(n, -1, -1))
             * (1 - self.p) ** (np.arange(0, n + 1, 1))
             * binom(n, np.arange(n + 1))
         )
 
-        return risk_probs
+        return probs
 
 class EuropeanBAT(BinomialAssetTree):
     '''
@@ -181,20 +181,36 @@ class CapitalAssetPricing(BinomialAssetTree):
         super().__init__(u, S0, K, T, N, r)
         self.real_p = real_p    # real probabilities of an upward jump
         self.X0 = X0    # initial wealth
+        self.real_probs = self.compute_real_probs() # compute real probabilities
 
         # Compute risk neutral probabilities for all outcomes
-        self.risk_ps = self.risk_probs()
-        self.Z = self.risk_probs / self.real_p  # compute Randon Nikodym derivative
-        self.zeta = self.Z / (1 + self.r) ** self.n # compute zeta
-        self.pn_zeta = self.p * self.zeta # compute pn_zeta
+        self.Z = self.risk_probs() / self.real_probs  # compute Randon Nikodym derivative
+        self.zeta = self.Z / (1 + self.r) ** self.N # compute zeta
+        self.pn_zeta = self.real_probs * self.zeta # compute pn_zeta
+
+    def compute_real_probs(self, n=None):
+        '''
+        Compute real probabilities of outcomes for a given n
+        Notes, we sume probabilities of symmetric events i.e P(HT) = P(TH) thus, multiply by 2
+        '''
+        if n is None:
+            n = self.N
+
+        probs = (
+            self.real_p ** (np.arange(n, -1, -1))
+            * (1 - self.real_p) ** (np.arange(0, n + 1, 1))
+            * binom(n, np.arange(n + 1))
+        )
+
+        return probs
 
     def solve(self):
 
         # Only implemented for log at the momen Generalise to arbitary convex function
 
-        self.x = cp.Variable(self.N + 1)
+        self.x = cp.Variable(self.N+1)
         self.problem = cp.Problem(
-            cp.Maximize(self.p @ cp.log(self.x)), [self.pn_zeta @ self.x == self.X0]
+            cp.Maximize(self.real_probs@ cp.log(self.x)), [self.pn_zeta @ self.x == self.X0]
         )
         self.problem.solve()
 
@@ -204,20 +220,23 @@ class CapitalAssetPricing(BinomialAssetTree):
 
 if __name__ == "__main__":
 
-    N = 3
+    # Define some system parameters for the model
     u = 2
-    r = -np.log(1.25)
-    K = 5
+    p = 0.5
+
+    N = 2
+    n = 2
+    K = 7
     S0 = 4
-    T = N
-    option = "put"
+    X0 = 4
+    r = -np.log(1.25)
 
+    model = CapitalAssetPricing(u, S0, K, N, N, r, p, X0)
 
-    tree = BinomialAssetTree(u, S0, K, T, N, r)
-    eurotree = EuropeanBAT(u, S0, K, T, N, r, option=option)
-    ustree = AmericanBAT(u, S0, K, T, N, r)
+    model.solve()
 
-    print(eurotree.hedging_ratio())
-    print(ustree.cash_flow(2))
+    print(model.real_probs)
+    print(model.risk_probs())
 
+    print(model.x.value)
 
